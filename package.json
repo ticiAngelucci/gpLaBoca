@@ -1,0 +1,32 @@
+{
+  "name": "boca-grand-party",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "simulate": "tsx scripts/simulate.ts",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "three": "^0.169.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@oxlint/binding-linux-x64-gnu": "^1.83.0",
+    "@rolldown/binding-linux-x64-gnu": "^1.2.9",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "tsx": "^4.19.2",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
