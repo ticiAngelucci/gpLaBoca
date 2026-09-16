@@ -1,58 +1,43 @@
 import { create } from 'zustand';
-import { createGame, reduce } from './engine/engine';
-import type { GameAction, GameState, ItemId } from './engine/types';
+import { DRIVERS } from './race/drivers';
+import type { RaceConfig } from './race/raceEngine';
 
-export type Screen = 'menu' | 'select' | 'game';
+export type Screen = 'menu' | 'select' | 'race';
+export type Difficulty = RaceConfig['difficulty'];
 
-export interface PlayerSetup {
-  name: string;
+export interface RaceSetup {
+  laps: number;
+  gridSize: number;
+  difficulty: Difficulty;
   driverId: string;
-  control: 'human' | 'cpu';
+  label: string;
 }
 
 interface Store {
   screen: Screen;
-  mode: 'quick' | 'party';
-  setup: PlayerSetup[];
-  game: GameState | null;
-  /** True while the board renderer is animating a car. */
-  animating: boolean;
-  cameraFocus: number | null;
+  setup: RaceSetup;
+  /** Bumping this remounts the race scene for a rematch. */
+  raceKey: number;
   setScreen: (s: Screen) => void;
-  setMode: (m: 'quick' | 'party') => void;
-  setSetup: (s: PlayerSetup[]) => void;
-  startGame: () => void;
-  dispatch: (action: GameAction) => void;
-  useItem: (item: ItemId, targetId?: number) => void;
-  setAnimating: (v: boolean) => void;
+  patchSetup: (p: Partial<RaceSetup>) => void;
+  startRace: () => void;
+  restart: () => void;
   quit: () => void;
 }
 
 export const useStore = create<Store>((set, get) => ({
   screen: 'menu',
-  mode: 'party',
-  setup: [
-    { name: 'Jugador 1', driverId: 'voss', control: 'human' },
-    { name: 'CPU Kofi', driverId: 'mensah', control: 'cpu' },
-    { name: 'CPU Luca', driverId: 'ferraro', control: 'cpu' },
-    { name: 'CPU Nico', driverId: 'salgado', control: 'cpu' },
-  ],
-  game: null,
-  animating: false,
-  cameraFocus: null,
+  setup: {
+    laps: 3,
+    gridSize: 8,
+    difficulty: 'pro',
+    driverId: DRIVERS[0].id,
+    label: 'Copa Caminito',
+  },
+  raceKey: 0,
   setScreen: (screen) => set({ screen }),
-  setMode: (mode) => set({ mode }),
-  setSetup: (setup) => set({ setup }),
-  startGame: () => {
-    const { setup, mode } = get();
-    set({ game: createGame({ mode, players: setup }), screen: 'game', animating: false });
-  },
-  dispatch: (action) => {
-    const game = get().game;
-    if (!game) return;
-    set({ game: reduce(game, action) });
-  },
-  useItem: (item, targetId) => get().dispatch({ type: 'USE_ITEM', item, targetId }),
-  setAnimating: (animating) => set({ animating }),
-  quit: () => set({ screen: 'menu', game: null }),
+  patchSetup: (p) => set({ setup: { ...get().setup, ...p } }),
+  startRace: () => set({ screen: 'race', raceKey: get().raceKey + 1 }),
+  restart: () => set({ raceKey: get().raceKey + 1 }),
+  quit: () => set({ screen: 'menu' }),
 }));

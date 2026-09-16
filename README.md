@@ -1,9 +1,9 @@
-# Grand Party La Boca
+# Grand Prix La Boca
 
-Juego de tablero + minijuegos para 2 a 4 jugadores, ambientado en La Boca, con autos
-de monoplaza y La Bombonera como escenario central. Corre en el navegador
-(Vite + React + TypeScript + Three.js), sin assets externos: todo el mundo 3D y las
-texturas se generan por código.
+Kart racer arcade en el navegador: 8 monoplazas corriendo por un circuito urbano de
+La Boca que en el medio de la vuelta se mete adentro de La Bombonera, cruza la cancha
+y sale por debajo de las tribunas. Vite + React + TypeScript + Three.js, sin assets
+externos: el mundo 3D y las texturas se generan por código.
 
 ## Cómo correrlo
 
@@ -12,59 +12,62 @@ npm install
 npm run dev      # servidor de desarrollo
 npm run build    # typecheck + build de producción
 npm run lint     # oxlint
-npm run simulate # 24 partidas headless para validar el motor de turnos
+npm run simulate # 10 carreras headless para validar el motor
 ```
+
+Agregando `?auto=1` a la URL corre el modo demo: la IA maneja también el auto del
+jugador, útil para mirar el circuito entero sin manejar.
 
 ## Cómo se juega
 
-1. Elegís modo: **Partida rápida** (6 rondas) o **Modo fiesta** (12 rondas).
-2. Elegís 2 a 4 pilotos y marcás cuáles son humanos y cuáles CPU.
-3. Cada turno se tira el dado, el auto recorre el tablero y se resuelve la casilla.
-4. Las monedas compran la estrella (20 monedas) que aparece rotando por el barrio.
-5. Al final de cada ronda se juega un minijuego y se reparten monedas por puesto.
-6. En determinada ronda **se abre el portón de La Bombonera**: todos bajan por el
-   túnel, dan una vuelta por la cancha, juegan un minijuego adentro y salen otra vez
-   a las calles.
-7. Gana quien más estrellas tenga; las monedas desempatan y hay estrellas bonus por
-   monedas y por minijuegos ganados.
+1. Elegís modo: **Copa Caminito** (3 vueltas, 8 autos), **Sprint del Puerto**
+   (2 vueltas, 6 autos) o **Maratón Xeneize** (5 vueltas, grilla llena).
+2. Elegís dificultad: Tranqui, Pro o Leyenda.
+3. Elegís piloto: cada uno tiene velocidad, aceleración, manejo, derrape y resistencia
+   distintos.
+4. Corrés: derrapás para cargar mini-turbo, saltás rampas, buscás atajos y agarrás
+   cajas de objetos.
+5. En cada vuelta el circuito entra a La Bombonera: tribunas, reflectores, la cancha y
+   los túneles de salida.
 
-### Controles (multijugador local, un teclado)
+### Controles
 
-| Jugador | Mover | Acción |
-| --- | --- | --- |
-| P1 | W A S D | Espacio / F |
-| P2 | Flechas | Enter / Shift der. |
-| P3 | I J K L | H |
-| P4 | Numpad 8 4 5 6 | Numpad 0 |
+| Acción | Teclas |
+| --- | --- |
+| Acelerar | W / ↑ |
+| Frenar | S / ↓ |
+| Girar | A D / ← → |
+| Derrapar | Espacio / Shift |
+| Usar objeto | E / Ctrl |
+
+### Objetos
+
+Turbo del Riachuelo, Escudo de Chapa, Aceite del Taller, Bengala de Tribuna, Bomba de
+Barro, Pase de Atajo y Tormenta de Santa Rosa. Son originales del juego.
 
 ## Estructura
 
 ```
-src/engine/     motor de juego puro (sin React ni Three.js)
-  types.ts      tipos de estado y acciones
-  engine.ts     máquina de estados: reduce(state, action)
-  board.ts      grafo del tablero de La Boca + Bombonera
-  rng.ts        PRNG determinista por semilla
+src/race/       motor de carrera puro (sin React ni Three.js)
+  raceEngine.ts físicas arcade, derrape, objetos, IA, vueltas y ranking
+  track.ts      spline del circuito, rampas, atajos, cajas y zona del estadio
   drivers.ts    roster de pilotos (data-driven)
   items.ts      objetos
-src/three/      mundo 3D procedural (calles, casas, estadio, autos)
-src/minigames/  framework + minijuegos independientes
-src/ui/         menús, HUD, vistas de tablero y minijuego
-scripts/        simulación headless del motor
+src/three/      mundo 3D procedural, autos, cámara y render
+src/ui/         menú, selección de piloto, HUD, minimapa
+scripts/        simulación headless de carreras
 ```
 
-### Multijugador online a futuro
+### Rendimiento
 
-El motor es una función pura `reduce(state, action)` con RNG determinista
-(`seed` + `rngCursor` viven en el estado). Un servidor solo necesita ordenar las
-acciones y difundirlas: cada cliente llega al mismo estado sin enviar el estado
-completo. La UI nunca muta el estado por su cuenta: solo despacha acciones.
+La escena detecta si el navegador está sin aceleración por GPU y arranca en calidad
+baja; además, si las vueltas de render caen por debajo de 28 fps, apaga sombras y
+después baja la resolución para que la carrera siga en tiempo real.
 
 ### Agregar pilotos
 
-Agregá una entrada en `src/engine/drivers.ts`. Nombre, equipo, colores, stats
-(`power`, `luck`, `grip`, `reflex`) y casco. No hace falta tocar UI ni motor: la
-selección de pilotos, los colores del auto y las stats se leen de ahí.
+Agregá una entrada en `src/race/drivers.ts`: nombre, equipo, colores, casco y stats
+(`speed`, `accel`, `handling`, `drift`, `stamina`). No hace falta tocar UI ni motor.
 
 ## Legales
 

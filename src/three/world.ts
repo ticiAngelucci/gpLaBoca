@@ -1,6 +1,14 @@
 import * as THREE from 'three';
-import { BOARD } from '../engine/board';
-import { cobbleTexture, facadeTexture, grassTexture, standTexture } from './textures';
+import {
+  RAMPS,
+  SAMPLES_LIST,
+  SHORTCUTS,
+  STADIUM_CENTER,
+  inRect,
+  type TrackSample,
+} from '../race/track';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { asphaltTexture, cobbleTexture, facadeTexture, grassTexture, standTexture } from './textures';
 
 const CAMINITO_COLORS = ['#e94f37', '#f6bd3b', '#3fa7d6', '#59cd90', '#f26419', '#8a4fff'];
 
@@ -9,255 +17,465 @@ function seeded(i: number): number {
   return x - Math.floor(x);
 }
 
-/** Streets, cobblestones, painted houses, the docks and the stadium shell. */
-export function buildWorld(scene: THREE.Scene): { floodlights: THREE.SpotLight[] } {
+function insideStadium(p: THREE.Vector3): boolean {
+  return Math.abs(p.x - STADIUM_CENTER.x) < 56 && Math.abs(p.z - STADIUM_CENTER.z) < 62;
+}
+
+/** Keeps walls and houses away from the mouths of the dirt shortcuts. */
+function nearShortcut(p: THREE.Vector3, margin: number): boolean {
+  return SHORTCUTS.some((z) =>
+    inRect(p, z.pos, z.yaw, z.size[0] + margin, z.size[1] + margin),
+  );
+}
+
+/** Static props are welded into one mesh per material to keep draw calls low. */
+function addMerged(
+  scene: THREE.Scene,
+  geos: THREE.BufferGeometry[],
+  material: THREE.Material,
+  shadows = false,
+) {
+  if (!geos.length) return;
+  const merged = mergeGeometries(geos, false);
+  geos.forEach((g) => g.dispose());
+  if (!merged) return;
+  const mesh = new THREE.Mesh(merged, material);
+  mesh.castShadow = shadows;
+  mesh.receiveShadow = shadows;
+  scene.add(mesh);
+}
+
+function placed(
+  geo: THREE.BufferGeometry,
+  pos: THREE.Vector3,
+  yaw: number,
+): THREE.BufferGeometry {
+  const out = geo.clone();
+  out.applyMatrix4(
+    new THREE.Matrix4().compose(
+      pos,
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw),
+      new THREE.Vector3(1, 1, 1),
+    ),
+  );
+  return out;
+}
+
+export interface WorldHandles {
+  floodlights: THREE.SpotLight[];
+  rainSystem: THREE.Points;
+}
+
+/** Cobbles, painted houses, the docks, the circuit itself and the stadium. */
+export function buildWorld(scene: THREE.Scene): WorldHandles {
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(600, 600),
+    new THREE.PlaneGeometry(900, 900),
     new THREE.MeshStandardMaterial({ map: cobbleTexture(), roughness: 0.95 }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Riachuelo water on the north east side of the neighbourhood.
+  buildWater(scene);
+  buildRoad(scene);
+  buildDecor(scene);
+  const floodlights = buildStadium(scene);
+  const rainSystem = buildRain(scene);
+  return { floodlights, rainSystem };
+}
+
+function buildWater(scene: THREE.Scene) {
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(300, 170),
+    new THREE.PlaneGeometry(420, 260),
     new THREE.MeshStandardMaterial({
       color: '#3c6f79',
-      metalness: 0.25,
-      roughness: 0.3,
+      metalness: 0.3,
+      roughness: 0.25,
       emissive: new THREE.Color('#12333a'),
-      emissiveIntensity: 0.5,
-      transparent: true,
-      opacity: 0.94,
+      emissiveIntensity: 0.45,
     }),
   );
   water.rotation.x = -Math.PI / 2;
-  water.position.set(140, 0.05, 170);
-  water.receiveShadow = true;
+  water.position.set(470, 0.04, -120);
   scene.add(water);
 
-  // Painted houses hugging the outside of the street loop.
-  const facadeMats = CAMINITO_COLORS.map(
-    (c) => new THREE.MeshStandardMaterial({ map: facadeTexture(c), roughness: 0.75 }),
-  );
-  const street = BOARD.filter((t) => !t.inside);
-  const center = new THREE.Vector3(-4, 0, -4);
-  street.forEach((t, i) => {
-    if (i % 2 !== 0) return;
-    const p = new THREE.Vector3(...t.pos);
-    const outward = p.clone().sub(center).setY(0).normalize();
-    for (const side of [1, -1]) {
-      if (side === -1 && seeded(i * 3.7) > 0.45) continue;
-      // Kept well back from the street so the board stays readable from above.
-      const dist = side === 1 ? 17 + seeded(i) * 6 : -(16 + seeded(i + 99) * 5);
-      const h = 5 + seeded(i * 7.3) * 6;
-      const w = 6 + seeded(i * 2.1) * 4;
-      const house = new THREE.Mesh(
-        new THREE.BoxGeometry(w, h, 6 + seeded(i * 5.5) * 3),
-        facadeMats[Math.floor(seeded(i + side * 13) * facadeMats.length)],
-      );
-      house.position.copy(p).addScaledVector(outward, dist);
-      house.position.y = h / 2;
-      house.lookAt(new THREE.Vector3(p.x, h / 2, p.z));
-      house.castShadow = true;
-      house.receiveShadow = true;
-      scene.add(house);
-
-      if (seeded(i * 11.3) > 0.55) {
-        const balcony = new THREE.Mesh(
-          new THREE.BoxGeometry(w * 0.8, 0.35, 1.6),
-          new THREE.MeshStandardMaterial({ color: '#2b2b33', roughness: 0.6 }),
-        );
-        balcony.position.copy(house.position);
-        balcony.position.y = h * 0.62;
-        balcony.translateZ(3.4);
-        balcony.quaternion.copy(house.quaternion);
-        balcony.position.copy(house.position).addScaledVector(outward, -3.2);
-        balcony.position.y = h * 0.62;
-        scene.add(balcony);
-      }
-    }
-  });
-
-  // Transporter bridge silhouette over the water.
   const steel = new THREE.MeshStandardMaterial({ color: '#7c3b2a', metalness: 0.6, roughness: 0.5 });
   const bridge = new THREE.Group();
   [-1, 1].forEach((s) => {
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(2.2, 46, 2.2), steel);
-    tower.position.set(s * 16, 23, 0);
-    tower.castShadow = true;
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(2.6, 52, 2.6), steel);
+    tower.position.set(s * 18, 26, 0);
     bridge.add(tower);
   });
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(36, 1.6, 3), steel);
-  deck.position.y = 44;
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(40, 1.8, 3.4), steel);
+  deck.position.y = 50;
   bridge.add(deck);
-  bridge.position.set(120, 0, 120);
+  bridge.position.set(226, 0, -120);
   scene.add(bridge);
 
-  // Port cranes and containers.
   const containerColors = ['#c0392b', '#2980b9', '#27ae60', '#f39c12'];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 40; i++) {
     const box = new THREE.Mesh(
-      new THREE.BoxGeometry(7, 3, 3),
+      new THREE.BoxGeometry(8, 3, 3.2),
       new THREE.MeshStandardMaterial({
         color: containerColors[i % containerColors.length],
-        roughness: 0.8,
+        roughness: 0.85,
       }),
     );
-    box.position.set(96 + (i % 4) * 8, 1.5 + Math.floor(i / 8) * 3, 78 + Math.floor(i / 4) * 5);
+    box.position.set(
+      256 + (i % 5) * 9,
+      1.5 + Math.floor(i / 10) * 3,
+      -200 + Math.floor(i / 5) * 12,
+    );
     box.castShadow = true;
     scene.add(box);
   }
 
-  buildCrowd(scene, street, center);
-
-  const floodlights = buildStadium(scene);
-  return { floodlights };
+  for (let i = 0; i < 3; i++) {
+    const crane = new THREE.Group();
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(2, 34, 2), steel);
+    mast.position.y = 17;
+    crane.add(mast);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(40, 1.6, 2), steel);
+    arm.position.set(-12, 33, 0);
+    crane.add(arm);
+    crane.position.set(262, 0, -60 - i * 56);
+    scene.add(crane);
+  }
 }
 
-/** Neighbours on the sidewalk: cheap instanced silhouettes that fill the streets. */
-function buildCrowd(scene: THREE.Scene, street: typeof BOARD, center: THREE.Vector3) {
-  const skin = ['#2f3640', '#8e44ad', '#16a085', '#c0392b', '#2c3e50', '#d35400'];
-  const geo = new THREE.CapsuleGeometry(0.42, 1.1, 4, 8);
-  skin.forEach((color, ci) => {
-    const mesh = new THREE.InstancedMesh(
-      geo,
-      new THREE.MeshStandardMaterial({ color, roughness: 0.9 }),
-      street.length,
-    );
-    const dummy = new THREE.Object3D();
-    let n = 0;
-    street.forEach((t, i) => {
-      if ((i + ci) % skin.length !== 0) return;
-      const p = new THREE.Vector3(...t.pos);
-      const outward = p.clone().sub(center).setY(0).normalize();
-      const side = seeded(i * 4.1 + ci) > 0.5 ? 1 : -1;
-      dummy.position
-        .copy(p)
-        .addScaledVector(outward, side * (8 + seeded(i * 6.7) * 4))
-        .setY(1.05);
-      dummy.position.x += (seeded(i * 9.3) - 0.5) * 3;
-      dummy.position.z += (seeded(i * 1.7) - 0.5) * 3;
-      dummy.rotation.y = seeded(i * 2.9) * Math.PI * 2;
-      dummy.updateMatrix();
-      mesh.setMatrixAt(n, dummy.matrix);
-      n += 1;
+/** Tarmac ribbon, curbs, start line and the shortcut surfaces. */
+function buildRoad(scene: THREE.Scene) {
+  const road = new THREE.Mesh(
+    ribbonGeometry(SAMPLES_LIST, (s) => s.half),
+    new THREE.MeshStandardMaterial({ map: asphaltTexture(), roughness: 0.82 }),
+  );
+  road.position.y = 0.08;
+  road.receiveShadow = true;
+  scene.add(road);
+
+  // Red and white curbs on both sides.
+  const curbMat = new THREE.MeshStandardMaterial({ color: '#d8d8d8', roughness: 0.7 });
+  const curbRed = new THREE.MeshStandardMaterial({ color: '#c8343a', roughness: 0.7 });
+  const curbGeo = new THREE.BoxGeometry(1.5, 0.16, 4.6);
+  const white: THREE.BufferGeometry[] = [];
+  const red: THREE.BufferGeometry[] = [];
+  SAMPLES_LIST.forEach((s, i) => {
+    if (i % 6 !== 0) return;
+    if (insideStadium(s.pos)) return;
+    [1, -1].forEach((side) => {
+      const pos = s.pos
+        .clone()
+        .addScaledVector(s.right, side * (s.half + 0.7))
+        .setY(0.12);
+      const piece = placed(curbGeo, pos, Math.atan2(s.dir.x, s.dir.z));
+      (i % 12 === 0 ? red : white).push(piece);
     });
-    mesh.count = n;
-    mesh.castShadow = true;
-    scene.add(mesh);
+  });
+  addMerged(scene, white, curbMat);
+  addMerged(scene, red, curbRed);
+
+  // Start / finish line.
+  const start = SAMPLES_LIST[0];
+  const line = new THREE.Mesh(
+    new THREE.PlaneGeometry(start.half * 2, 3),
+    new THREE.MeshStandardMaterial({ map: checkerTexture(), roughness: 0.6 }),
+  );
+  line.rotation.x = -Math.PI / 2;
+  line.rotation.z = -Math.atan2(start.dir.x, start.dir.z);
+  line.position.copy(start.pos).setY(0.14);
+  scene.add(line);
+
+  const gantry = new THREE.Group();
+  const post = new THREE.BoxGeometry(1.1, 9, 1.1);
+  const postMat = new THREE.MeshStandardMaterial({ color: '#1b1f2a', roughness: 0.6 });
+  [-1, 1].forEach((side) => {
+    const p = new THREE.Mesh(post, postMat);
+    p.position.copy(start.pos).addScaledVector(start.right, side * (start.half + 1.5)).setY(4.5);
+    gantry.add(p);
+  });
+  const banner = new THREE.Mesh(
+    new THREE.BoxGeometry(start.half * 2 + 4, 2.4, 0.6),
+    new THREE.MeshStandardMaterial({
+      color: '#0b4ea2',
+      emissive: new THREE.Color('#0b4ea2'),
+      emissiveIntensity: 0.4,
+    }),
+  );
+  banner.position.copy(start.pos).setY(9);
+  banner.rotation.y = Math.atan2(start.dir.x, start.dir.z);
+  gantry.add(banner);
+  scene.add(gantry);
+
+  // Shortcut surfaces: packed dirt alleys and plazas.
+  SHORTCUTS.forEach((z) => {
+    const patch = new THREE.Mesh(
+      new THREE.PlaneGeometry(z.size[0], z.size[1]),
+      new THREE.MeshStandardMaterial({ color: '#7a6244', roughness: 1 }),
+    );
+    patch.rotation.x = -Math.PI / 2;
+    patch.rotation.z = -z.yaw;
+    patch.position.copy(z.pos).setY(0.07);
+    patch.receiveShadow = true;
+    scene.add(patch);
+  });
+
+  // Jump ramps.
+  RAMPS.forEach((r) => {
+    const ramp = new THREE.Mesh(
+      new THREE.BoxGeometry(r.width, 1.5, r.length),
+      new THREE.MeshStandardMaterial({ color: '#f2c500', roughness: 0.6 }),
+    );
+    ramp.position.copy(r.pos).setY(0.4);
+    ramp.rotation.y = r.yaw;
+    ramp.rotation.x = -0.16;
+    ramp.castShadow = true;
+    scene.add(ramp);
   });
 }
 
-/** La Bombonera inspired bowl: three steep stands plus the flat vertical side. */
+/** Two sided ribbon mesh following the centre line. */
+function ribbonGeometry(
+  samples: TrackSample[],
+  halfOf: (s: TrackSample) => number,
+): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const n = samples.length;
+  samples.forEach((s, i) => {
+    const h = halfOf(s);
+    const l = s.pos.clone().addScaledVector(s.right, -h);
+    const r = s.pos.clone().addScaledVector(s.right, h);
+    positions.push(l.x, 0, l.z, r.x, 0, r.z);
+    const v = s.dist / 12;
+    uvs.push(0, v, 1, v);
+    const a = i * 2;
+    const b = ((i + 1) % n) * 2;
+    indices.push(a, b, a + 1, a + 1, b, b + 1);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function checkerTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d') as CanvasRenderingContext2D;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      ctx.fillStyle = (x + y) % 2 ? '#101015' : '#f5f5f5';
+      ctx.fillRect(x * 16, y * 16, 16, 16);
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(10, 1);
+  return tex;
+}
+
+/** Houses, murals, signs, palms and the crowd lining the circuit. */
+function buildDecor(scene: THREE.Scene) {
+  const facadeMats = CAMINITO_COLORS.map(
+    (c) => new THREE.MeshStandardMaterial({ map: facadeTexture(c), roughness: 0.75 }),
+  );
+  const crowdGeo = new THREE.CapsuleGeometry(0.4, 1.05, 4, 8);
+  const crowdMats = ['#2f3640', '#8e44ad', '#16a085', '#c0392b', '#2c3e50', '#d35400'].map(
+    (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.9 }),
+  );
+  const crowdDummy = new THREE.Object3D();
+  const crowdMeshes = crowdMats.map((m) => {
+    const mesh = new THREE.InstancedMesh(crowdGeo, m, 220);
+    mesh.count = 0;
+    scene.add(mesh);
+    return mesh;
+  });
+  const crowdCount = crowdMats.map(() => 0);
+
+  const barrierMat = new THREE.MeshStandardMaterial({ color: '#d7dae0', roughness: 0.7 });
+  const barrierGeo = new THREE.BoxGeometry(0.7, 1.1, 5);
+  const barriers: THREE.BufferGeometry[] = [];
+  const houseParts: THREE.BufferGeometry[][] = facadeMats.map(() => []);
+  const signParts: THREE.BufferGeometry[][] = CAMINITO_COLORS.map(() => []);
+
+  SAMPLES_LIST.forEach((s, i) => {
+    if (i % 6 !== 0) return;
+    if (insideStadium(s.pos)) return;
+
+    // Track side barriers.
+    [1, -1].forEach((side) => {
+      const pos = s.pos
+        .clone()
+        .addScaledVector(s.right, side * (s.half + 2.2))
+        .setY(0.55);
+      if (nearShortcut(pos, 6)) return;
+      barriers.push(placed(barrierGeo, pos, Math.atan2(s.dir.x, s.dir.z)));
+    });
+
+    // Painted houses set back from the barriers.
+    if (i % 18 === 0) {
+      [1, -1].forEach((side) => {
+        if (seeded(i * 3.7 + side) > 0.82) return;
+        const h = 6 + seeded(i * 7.3 + side) * 9;
+        const w = 7 + seeded(i * 2.1) * 5;
+        const yaw = Math.atan2(s.dir.x, s.dir.z);
+        const pos = s.pos
+          .clone()
+          .addScaledVector(s.right, side * (s.half + 13 + seeded(i) * 7))
+          .setY(h / 2);
+        if (nearShortcut(pos, 14)) return;
+        const matIndex = Math.floor(seeded(i + side * 13) * facadeMats.length);
+        houseParts[matIndex].push(
+          placed(new THREE.BoxGeometry(w, h, 8 + seeded(i * 5.5) * 4), pos, yaw),
+        );
+
+        if (seeded(i * 11.3) > 0.6) {
+          const signPos = pos
+            .clone()
+            .addScaledVector(s.right, -side * 4.2)
+            .setY(h * 0.75);
+          signParts[i % CAMINITO_COLORS.length].push(
+            placed(new THREE.BoxGeometry(w * 0.7, 1.6, 0.3), signPos, yaw),
+          );
+        }
+      });
+    }
+
+    // Spectators behind the barriers.
+    const ci = i % crowdMats.length;
+    if (crowdCount[ci] < 220) {
+      const side = seeded(i * 4.1) > 0.5 ? 1 : -1;
+      crowdDummy.position
+        .copy(s.pos)
+        .addScaledVector(s.right, side * (s.half + 4 + seeded(i * 6.7) * 3))
+        .setY(1.0);
+      if (nearShortcut(crowdDummy.position, 6)) return;
+      crowdDummy.rotation.y = Math.atan2(-s.right.x * side, -s.right.z * side);
+      crowdDummy.updateMatrix();
+      crowdMeshes[ci].setMatrixAt(crowdCount[ci], crowdDummy.matrix);
+      crowdCount[ci] += 1;
+    }
+  });
+  crowdMeshes.forEach((m, i) => {
+    m.count = crowdCount[i];
+    m.instanceMatrix.needsUpdate = true;
+  });
+
+  addMerged(scene, barriers, barrierMat, true);
+  houseParts.forEach((parts, i) => addMerged(scene, parts, facadeMats[i], true));
+  signParts.forEach((parts, i) =>
+    addMerged(
+      scene,
+      parts,
+      new THREE.MeshStandardMaterial({
+        color: CAMINITO_COLORS[i],
+        emissive: new THREE.Color(CAMINITO_COLORS[(i + 2) % CAMINITO_COLORS.length]),
+        emissiveIntensity: 0.6,
+      }),
+    ),
+  );
+}
+
+/** La Bombonera: three steep stands, the flat vertical side and two tunnels. */
 function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
   const stadium = new THREE.Group();
-  stadium.position.set(0, 0, -95);
+  stadium.position.copy(STADIUM_CENTER);
 
   const pitch = new THREE.Mesh(
-    new THREE.PlaneGeometry(64, 92),
+    new THREE.PlaneGeometry(70, 100),
     new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 0.95 }),
   );
   pitch.rotation.x = -Math.PI / 2;
-  pitch.position.y = -3.4;
+  pitch.position.y = 0.02;
   pitch.receiveShadow = true;
   stadium.add(pitch);
 
   const lineMat = new THREE.MeshStandardMaterial({ color: '#f2f2f2' });
-  const circle = new THREE.Mesh(new THREE.RingGeometry(8.4, 9, 48), lineMat);
+  const circle = new THREE.Mesh(new THREE.RingGeometry(9, 9.6, 48), lineMat);
   circle.rotation.x = -Math.PI / 2;
-  circle.position.y = -3.35;
+  circle.position.y = 0.05;
   stadium.add(circle);
 
   const standMat = new THREE.MeshStandardMaterial({ map: standTexture(), roughness: 0.9 });
-  const concrete = new THREE.MeshStandardMaterial({ color: '#1b3a74', roughness: 0.8 });
+  const concrete = new THREE.MeshStandardMaterial({ color: '#12336b', roughness: 0.8 });
 
-  // Steep side stands.
-  const sideStand = (x: number) => {
-    const g = new THREE.Group();
+  [-1, 1].forEach((s) => {
     for (let tier = 0; tier < 3; tier++) {
-      const h = 9;
-      const seat = new THREE.Mesh(new THREE.BoxGeometry(14, h, 96), standMat);
-      seat.position.set(x + Math.sign(x) * tier * 5.5, -3 + tier * 8.4 + h / 2, 0);
-      seat.rotation.z = Math.sign(x) * -0.18;
+      const h = 10;
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(15, h, 104), standMat);
+      seat.position.set(s * (44 + tier * 6), tier * 9 + h / 2, 0);
+      seat.rotation.z = s * -0.2;
       seat.castShadow = true;
-      seat.receiveShadow = true;
-      g.add(seat);
-    }
-    return g;
-  };
-  stadium.add(sideStand(-40));
-  stadium.add(sideStand(40));
-
-  // Curved ends.
-  [1, -1].forEach((s) => {
-    for (let tier = 0; tier < 3; tier++) {
-      const end = new THREE.Mesh(new THREE.BoxGeometry(96, 9, 14), standMat);
-      end.position.set(0, -3 + tier * 8.4 + 4.5, s * (52 + tier * 5.5));
-      end.rotation.x = s * 0.18;
-      end.castShadow = true;
-      stadium.add(end);
+      stadium.add(seat);
     }
   });
 
-  // The flat "vertical" stand that makes the ground unmistakable.
-  const flat = new THREE.Mesh(new THREE.BoxGeometry(16, 34, 96), concrete);
-  flat.position.set(58, 14, 0);
+  // End stands with a gap so the circuit can pass underneath.
+  [1, -1].forEach((s) => {
+    for (let tier = 0; tier < 3; tier++) {
+      [-1, 1].forEach((half) => {
+        const end = new THREE.Mesh(new THREE.BoxGeometry(30, 10, 15), standMat);
+        end.position.set(half * 43, tier * 9 + 5, s * (54 + tier * 6));
+        end.rotation.x = s * 0.2;
+        end.castShadow = true;
+        stadium.add(end);
+      });
+      // Deck bridging over the tunnel mouth.
+      const over = new THREE.Mesh(new THREE.BoxGeometry(56, 10, 15), standMat);
+      over.position.set(0, tier * 9 + 14, s * (54 + tier * 6));
+      over.rotation.x = s * 0.2;
+      stadium.add(over);
+    }
+    const tunnel = new THREE.Mesh(
+      new THREE.BoxGeometry(56, 1.2, 30),
+      new THREE.MeshStandardMaterial({ color: '#0d0f14', roughness: 1 }),
+    );
+    tunnel.position.set(0, 11.5, s * 56);
+    stadium.add(tunnel);
+    [-1, 1].forEach((side) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 12, 30), concrete);
+      wall.position.set(side * 29, 6, s * 56);
+      stadium.add(wall);
+    });
+  });
+
+  const flat = new THREE.Mesh(new THREE.BoxGeometry(16, 38, 104), concrete);
+  flat.position.set(64, 19, 0);
   flat.castShadow = true;
   stadium.add(flat);
-  for (let i = 0; i < 4; i++) {
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(2, 5, 92),
-      new THREE.MeshStandardMaterial({
-        color: '#0b1c3c',
-        metalness: 0.3,
-        roughness: 0.2,
-        emissive: new THREE.Color('#0a2a5c'),
-        emissiveIntensity: 0.4,
-      }),
-    );
-    box.position.set(50.5, 4 + i * 8, 0);
-    stadium.add(box);
-  }
-
-  // Tunnel mouth the cars drive through.
-  const tunnel = new THREE.Mesh(
-    new THREE.BoxGeometry(12, 8, 26),
-    new THREE.MeshStandardMaterial({ color: '#12141a', roughness: 1 }),
-  );
-  tunnel.position.set(0, 0.5, 62);
-  stadium.add(tunnel);
 
   const floodlights: THREE.SpotLight[] = [];
   const corners: [number, number][] = [
-    [-46, -56],
-    [46, -56],
-    [-46, 56],
-    [46, 56],
+    [-50, -60],
+    [50, -60],
+    [-50, 60],
+    [50, 60],
   ];
   corners.forEach(([x, z]) => {
     const mast = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.7, 0.9, 46, 10),
+      new THREE.CylinderGeometry(0.8, 1, 52, 10),
       new THREE.MeshStandardMaterial({ color: '#2a2f3a', metalness: 0.6, roughness: 0.5 }),
     );
-    mast.position.set(x, 23, z);
+    mast.position.set(x, 26, z);
     stadium.add(mast);
     const rig = new THREE.Mesh(
-      new THREE.BoxGeometry(9, 4, 1.2),
+      new THREE.BoxGeometry(10, 4, 1.3),
       new THREE.MeshStandardMaterial({
         color: '#fffbe6',
         emissive: new THREE.Color('#fff4c2'),
-        emissiveIntensity: 1.4,
+        emissiveIntensity: 1.6,
       }),
     );
-    rig.position.set(x, 45, z);
-    rig.lookAt(new THREE.Vector3(0, 0, 0).add(stadium.position));
+    rig.position.set(x, 51, z);
+    rig.lookAt(STADIUM_CENTER);
     stadium.add(rig);
 
-    const light = new THREE.SpotLight('#fff6de', 0, 200, Math.PI / 5, 0.5, 1.2);
-    light.position.set(x, 46, z);
-    light.target.position.set(0, -3, 0);
+    const light = new THREE.SpotLight('#fff6de', 2.2, 260, Math.PI / 4.5, 0.6, 1.1);
+    light.position.set(x, 52, z);
+    light.target.position.set(0, 0, 0);
     stadium.add(light);
     stadium.add(light.target);
     floodlights.push(light);
@@ -265,4 +483,23 @@ function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
 
   scene.add(stadium);
   return floodlights;
+}
+
+function buildRain(scene: THREE.Scene): THREE.Points {
+  const count = 4000;
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 160;
+    positions[i * 3 + 1] = Math.random() * 60;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 160;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const points = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({ color: '#cfe8ff', size: 0.35, transparent: true, opacity: 0.75 }),
+  );
+  points.visible = false;
+  scene.add(points);
+  return points;
 }

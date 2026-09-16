@@ -36,6 +36,29 @@ export function cobbleTexture(): THREE.Texture {
   return tex;
 }
 
+/** Worn asphalt with a faint centre line, tiled along the circuit. */
+export function asphaltTexture(): THREE.Texture {
+  const [c, ctx] = canvas(256);
+  ctx.fillStyle = '#26282f';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 6000; i++) {
+    const g = 30 + Math.random() * 40;
+    ctx.fillStyle = `rgba(${g},${g},${g + 4},${Math.random() * 0.5})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  ctx.strokeStyle = 'rgba(240,240,240,0.35)';
+  ctx.lineWidth = 4;
+  ctx.setLineDash([26, 26]);
+  ctx.beginPath();
+  ctx.moveTo(128, 0);
+  ctx.lineTo(128, 256);
+  ctx.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 8;
+  return tex;
+}
+
 /** Corrugated, brightly painted sheet metal facades. */
 export function facadeTexture(color: string): THREE.Texture {
   const [c, ctx] = canvas(256);
