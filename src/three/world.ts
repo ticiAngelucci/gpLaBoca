@@ -21,17 +21,19 @@ export function buildWorld(scene: THREE.Scene): { floodlights: THREE.SpotLight[]
 
   // Riachuelo water on the north east side of the neighbourhood.
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(260, 150),
+    new THREE.PlaneGeometry(300, 170),
     new THREE.MeshStandardMaterial({
-      color: '#2d4a49',
-      metalness: 0.9,
-      roughness: 0.15,
+      color: '#3c6f79',
+      metalness: 0.25,
+      roughness: 0.3,
+      emissive: new THREE.Color('#12333a'),
+      emissiveIntensity: 0.5,
       transparent: true,
       opacity: 0.94,
     }),
   );
   water.rotation.x = -Math.PI / 2;
-  water.position.set(78, 0.05, 92);
+  water.position.set(140, 0.05, 170);
   water.receiveShadow = true;
   scene.add(water);
 
@@ -47,8 +49,9 @@ export function buildWorld(scene: THREE.Scene): { floodlights: THREE.SpotLight[]
     const outward = p.clone().sub(center).setY(0).normalize();
     for (const side of [1, -1]) {
       if (side === -1 && seeded(i * 3.7) > 0.45) continue;
-      const dist = side === 1 ? 11 + seeded(i) * 4 : -(10 + seeded(i + 99) * 3);
-      const h = 6 + seeded(i * 7.3) * 9;
+      // Kept well back from the street so the board stays readable from above.
+      const dist = side === 1 ? 17 + seeded(i) * 6 : -(16 + seeded(i + 99) * 5);
+      const h = 5 + seeded(i * 7.3) * 6;
       const w = 6 + seeded(i * 2.1) * 4;
       const house = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, 6 + seeded(i * 5.5) * 3),
@@ -89,7 +92,7 @@ export function buildWorld(scene: THREE.Scene): { floodlights: THREE.SpotLight[]
   const deck = new THREE.Mesh(new THREE.BoxGeometry(36, 1.6, 3), steel);
   deck.position.y = 44;
   bridge.add(deck);
-  bridge.position.set(46, 0, 70);
+  bridge.position.set(120, 0, 120);
   scene.add(bridge);
 
   // Port cranes and containers.
@@ -102,13 +105,49 @@ export function buildWorld(scene: THREE.Scene): { floodlights: THREE.SpotLight[]
         roughness: 0.8,
       }),
     );
-    box.position.set(84 + (i % 4) * 8, 1.5 + Math.floor(i / 8) * 3, 26 + Math.floor(i / 4) * 5);
+    box.position.set(96 + (i % 4) * 8, 1.5 + Math.floor(i / 8) * 3, 78 + Math.floor(i / 4) * 5);
     box.castShadow = true;
     scene.add(box);
   }
 
+  buildCrowd(scene, street, center);
+
   const floodlights = buildStadium(scene);
   return { floodlights };
+}
+
+/** Neighbours on the sidewalk: cheap instanced silhouettes that fill the streets. */
+function buildCrowd(scene: THREE.Scene, street: typeof BOARD, center: THREE.Vector3) {
+  const skin = ['#2f3640', '#8e44ad', '#16a085', '#c0392b', '#2c3e50', '#d35400'];
+  const geo = new THREE.CapsuleGeometry(0.42, 1.1, 4, 8);
+  skin.forEach((color, ci) => {
+    const mesh = new THREE.InstancedMesh(
+      geo,
+      new THREE.MeshStandardMaterial({ color, roughness: 0.9 }),
+      street.length,
+    );
+    const dummy = new THREE.Object3D();
+    let n = 0;
+    street.forEach((t, i) => {
+      if ((i + ci) % skin.length !== 0) return;
+      const p = new THREE.Vector3(...t.pos);
+      const outward = p.clone().sub(center).setY(0).normalize();
+      const side = seeded(i * 4.1 + ci) > 0.5 ? 1 : -1;
+      dummy.position
+        .copy(p)
+        .addScaledVector(outward, side * (8 + seeded(i * 6.7) * 4))
+        .setY(1.05);
+      dummy.position.x += (seeded(i * 9.3) - 0.5) * 3;
+      dummy.position.z += (seeded(i * 1.7) - 0.5) * 3;
+      dummy.rotation.y = seeded(i * 2.9) * Math.PI * 2;
+      dummy.updateMatrix();
+      mesh.setMatrixAt(n, dummy.matrix);
+      n += 1;
+    });
+    mesh.count = n;
+    mesh.castShadow = true;
+    scene.add(mesh);
+  });
 }
 
 /** La Bombonera inspired bowl: three steep stands plus the flat vertical side. */

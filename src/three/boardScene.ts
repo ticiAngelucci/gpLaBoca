@@ -101,6 +101,7 @@ export class BoardScene {
   }
 
   private buildTiles() {
+    this.buildTrack();
     const geo = new THREE.CylinderGeometry(2.1, 2.1, 0.32, 6);
     BOARD.forEach((t) => {
       const mat = new THREE.MeshStandardMaterial({
@@ -116,6 +117,24 @@ export class BoardScene {
       mesh.rotation.y = Math.PI / 6;
       this.scene.add(mesh);
       this.tileMeshes.set(t.id, mesh);
+    });
+  }
+
+  /** Dark asphalt ribbon joining the tiles so the route reads as a street. */
+  private buildTrack() {
+    const mat = new THREE.MeshStandardMaterial({ color: '#23262e', roughness: 0.9 });
+    BOARD.forEach((t) => {
+      t.next.forEach((id) => {
+        const a = new THREE.Vector3(...t.pos);
+        const b = new THREE.Vector3(...tile(id).pos);
+        const len = a.distanceTo(b);
+        if (len < 0.01) return;
+        const seg = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.12, len + 5.2), mat);
+        seg.position.copy(a).lerp(b, 0.5).setY((a.y + b.y) / 2 + 0.06);
+        seg.lookAt(new THREE.Vector3(b.x, seg.position.y, b.z));
+        seg.receiveShadow = true;
+        this.scene.add(seg);
+      });
     });
   }
 
@@ -236,9 +255,9 @@ export class BoardScene {
   private updateCamera(dt: number) {
     const rig = this.cars.get(this.focusId);
     const target = rig ? rig.group.position.clone() : new THREE.Vector3();
-    const t = this.frame * 0.0016;
-    const radius = this.insideStadium ? 34 : 46;
-    const height = this.insideStadium ? 22 : 34;
+    const t = this.frame * 0.0008;
+    const radius = this.insideStadium ? 40 : 44;
+    const height = this.insideStadium ? 34 : 54;
     const desired = new THREE.Vector3(
       target.x + Math.sin(t) * radius,
       target.y + height,
