@@ -26,6 +26,8 @@ export interface HudSnapshot {
   shield: number;
   mud: number;
   offRoad: boolean;
+  /** True during the flourish that plays when entering La Bombonera. */
+  stadium: boolean;
   rain: boolean;
   driftCharge: number;
   bestLap: number | null;
@@ -92,6 +94,8 @@ export class RaceScene {
   private quality: number;
   private frameSum = 0;
   private frameCount = 0;
+  private onPitch = false;
+  private stadiumShot = 0;
   private onHud?: (s: HudSnapshot) => void;
 
   constructor(container: HTMLElement, config: RaceConfig, roster: string[]) {
@@ -339,18 +343,25 @@ export class RaceScene {
     });
     attr.needsUpdate = true;
 
+    // Stadium entry: one wide, high shot the first moment the car is on the pitch.
+    const onPitch = player.pos.distanceTo(STADIUM_CENTER) < 62;
+    if (onPitch && !this.onPitch) this.stadiumShot = 3.4;
+    this.onPitch = onPitch;
+    this.stadiumShot = Math.max(0, this.stadiumShot - dt);
+    const wide = Math.min(1, this.stadiumShot / 1.2);
+
     // Chase camera with a speed dependent field of view.
     const fwd = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
     const goal = player.pos
       .clone()
-      .addScaledVector(fwd, -10.5)
-      .setY(player.pos.y + 4.6)
+      .addScaledVector(fwd, -10.5 - wide * 7)
+      .setY(player.pos.y + 4.6 + wide * 5)
       .addScaledVector(new THREE.Vector3(fwd.z, 0, -fwd.x), player.slip * 3);
     this.camera.position.lerp(goal, Math.min(1, dt * 6));
     const look = player.pos.clone().addScaledVector(fwd, 10).setY(player.pos.y + 1.6);
     this.camera.lookAt(look);
     const boostFov = player.boost > 0 ? 8 : 0;
-    const targetFov = 62 + (player.speed / 40) * 12 + boostFov;
+    const targetFov = 62 + (player.speed / 40) * 12 + boostFov + wide * 10;
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 4);
     this.camera.updateProjectionMatrix();
 
@@ -360,8 +371,7 @@ export class RaceScene {
 
     // Stadium and weather lighting.
     const nearStadium = player.pos.distanceTo(STADIUM_CENTER) < 150;
-    const inStadium = player.pos.distanceTo(STADIUM_CENTER) < 70;
-    const floodTarget = inStadium ? 3.2 : 0.6;
+    const floodTarget = onPitch ? 3.2 : 0.6;
     this.floodlights.forEach((l) => {
       l.visible = nearStadium;
       if (nearStadium) l.intensity += (floodTarget - l.intensity) * Math.min(1, dt * 2);
@@ -450,6 +460,7 @@ export class RaceScene {
       shield: p.shield,
       mud: p.mud,
       offRoad: p.offRoad,
+      stadium: this.stadiumShot > 0,
       rain: state.rain > 0,
       driftCharge: p.driftCharge,
       bestLap: p.bestLap,

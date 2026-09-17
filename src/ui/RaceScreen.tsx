@@ -104,6 +104,13 @@ export function RaceScreen() {
             ))}
           </div>
 
+          {hud.stadium && (
+            <div className="stadium-banner">
+              <b>LA BOMBONERA</b>
+              <span>Cruzá la cancha y salí por el túnel</span>
+            </div>
+          )}
+
           {hud.phase === 'countdown' && (
             <div className="countdown">
               {hud.countdown > 2.6 ? '3' : hud.countdown > 1.6 ? '2' : hud.countdown > 0.6 ? '1' : '¡YA!'}
