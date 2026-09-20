@@ -8,7 +8,12 @@ import {
   type TrackSample,
 } from '../race/track';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { asphaltTexture, cobbleTexture, facadeTexture, grassTexture, standTexture } from './textures';
+
+/** Length the imported pitch is scaled to so the circuit still fits across it. */
+const PITCH_LENGTH = 100;
 
 const CAMINITO_COLORS = ['#e94f37', '#f6bd3b', '#3fa7d6', '#59cd90', '#f26419', '#8a4fff'];
 
@@ -383,6 +388,8 @@ function buildDecor(scene: THREE.Scene) {
 function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
   const stadium = new THREE.Group();
   stadium.position.copy(STADIUM_CENTER);
+  const shell = new THREE.Group();
+  stadium.add(shell);
 
   const pitch = new THREE.Mesh(
     new THREE.PlaneGeometry(70, 100),
@@ -409,7 +416,7 @@ function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
       seat.position.set(s * (44 + tier * 6), tier * 9 + h / 2, 0);
       seat.rotation.z = s * -0.2;
       seat.castShadow = true;
-      stadium.add(seat);
+      shell.add(seat);
     }
   });
 
@@ -421,31 +428,31 @@ function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
         end.position.set(half * 43, tier * 9 + 5, s * (54 + tier * 6));
         end.rotation.x = s * 0.2;
         end.castShadow = true;
-        stadium.add(end);
+        shell.add(end);
       });
       // Deck bridging over the tunnel mouth.
       const over = new THREE.Mesh(new THREE.BoxGeometry(56, 10, 15), standMat);
       over.position.set(0, tier * 9 + 14, s * (54 + tier * 6));
       over.rotation.x = s * 0.2;
-      stadium.add(over);
+      shell.add(over);
     }
     const tunnel = new THREE.Mesh(
       new THREE.BoxGeometry(56, 1.2, 30),
       new THREE.MeshStandardMaterial({ color: '#0d0f14', roughness: 1 }),
     );
     tunnel.position.set(0, 11.5, s * 56);
-    stadium.add(tunnel);
+    shell.add(tunnel);
     [-1, 1].forEach((side) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 12, 30), concrete);
       wall.position.set(side * 29, 6, s * 56);
-      stadium.add(wall);
+      shell.add(wall);
     });
   });
 
   const flat = new THREE.Mesh(new THREE.BoxGeometry(16, 38, 104), concrete);
   flat.position.set(64, 19, 0);
   flat.castShadow = true;
-  stadium.add(flat);
+  shell.add(flat);
 
   const floodlights: THREE.SpotLight[] = [];
   const corners: [number, number][] = [
@@ -482,7 +489,95 @@ function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
   });
 
   scene.add(stadium);
+  loadStadiumModel(stadium, shell);
   return floodlights;
+}
+
+/** Swaps the blocky stands for the detailed Bombonera once the model arrives. */
+function loadStadiumModel(stadium: THREE.Group, shell: THREE.Group) {
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  loader.load(`${import.meta.env.BASE_URL}models/bombonera.glb`, (gltf) => {
+    const model = gltf.scene;
+    model.updateMatrixWorld(true);
+    const pitch = new THREE.Box3();
+    model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      if (/cancha/i.test((mesh.material as THREE.Material).name)) pitch.expandByObject(mesh);
+    });
+    if (pitch.isEmpty()) return;
+    const origin = pitch.getCenter(new THREE.Vector3()).setY(pitch.max.y);
+    const scale = PITCH_LENGTH / (pitch.max.z - pitch.min.z);
+    trimStadium(model, origin, scale);
+    model.scale.setScalar(scale);
+    model.position.copy(origin).multiplyScalar(-scale);
+    shell.visible = false;
+    stadium.add(model);
+  });
+}
+
+/**
+ * Drops the city block that ships around the model and opens the stands at
+ * both ends so the circuit can run in and out of the pitch.
+ */
+function trimStadium(model: THREE.Object3D, origin: THREE.Vector3, scale: number) {
+  const corridor = trackCorridor();
+  const seen = new Set<THREE.BufferGeometry>();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    let geo = mesh.geometry as THREE.BufferGeometry;
+    if (seen.has(geo)) {
+      geo = geo.clone();
+      mesh.geometry = geo;
+    }
+    seen.add(geo);
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const src: ArrayLike<number> =
+      geo.getIndex()?.array ?? Array.from({ length: pos.count }, (_, i) => i);
+    const kept: number[] = [];
+    for (let i = 0; i < src.length; i += 3) {
+      a.fromBufferAttribute(pos, src[i]).applyMatrix4(mesh.matrixWorld).sub(origin);
+      b.fromBufferAttribute(pos, src[i + 1]).applyMatrix4(mesh.matrixWorld).sub(origin);
+      c.fromBufferAttribute(pos, src[i + 2]).applyMatrix4(mesh.matrixWorld).sub(origin);
+      const x = (a.x + b.x + c.x) / 3;
+      const y = (a.y + b.y + c.y) / 3;
+      const z = (a.z + b.z + c.z) / 3;
+      const outsideBowl = Math.abs(x) > 95 || Math.abs(z) > 112 || y < -3;
+      const onTrack =
+        y * scale < TUNNEL_HEIGHT &&
+        corridor.has(corridorKey(STADIUM_CENTER.x + x * scale, STADIUM_CENTER.z + z * scale));
+      if (outsideBowl || onTrack) continue;
+      kept.push(src[i], src[i + 1], src[i + 2]);
+    }
+    if (kept.length === src.length) return;
+    geo.setIndex(kept);
+  });
+}
+
+const CORRIDOR_CELL = 5;
+const CORRIDOR_HALF = 15;
+const TUNNEL_HEIGHT = 22;
+
+const corridorKey = (x: number, z: number) =>
+  `${Math.floor(x / CORRIDOR_CELL)}:${Math.floor(z / CORRIDOR_CELL)}`;
+
+/** Cells of the circuit that run through the stadium, used to carve the tunnels. */
+function trackCorridor(): Set<string> {
+  const cells = new Set<string>();
+  for (const sample of SAMPLES_LIST) {
+    if (sample.pos.distanceTo(STADIUM_CENTER) > 200) continue;
+    for (let dx = -CORRIDOR_HALF; dx <= CORRIDOR_HALF; dx += CORRIDOR_CELL)
+      for (let dz = -CORRIDOR_HALF; dz <= CORRIDOR_HALF; dz += CORRIDOR_CELL)
+        cells.add(corridorKey(sample.pos.x + dx, sample.pos.z + dz));
+  }
+  return cells;
 }
 
 function buildRain(scene: THREE.Scene): THREE.Points {
