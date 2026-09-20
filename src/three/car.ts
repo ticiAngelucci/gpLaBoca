@@ -1,9 +1,51 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 export interface CarRig {
   group: THREE.Group;
   wheels: THREE.Mesh[];
   body: THREE.Mesh;
+}
+
+/** Wheelbase-to-nose length every imported car is scaled to, in metres. */
+const CAR_LENGTH = 4.6;
+
+const modelCache = new Map<string, Promise<THREE.Object3D>>();
+
+function loadCarModel(file: string): Promise<THREE.Object3D> {
+  const cached = modelCache.get(file);
+  if (cached) return cached;
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  const pending = loader
+    .loadAsync(`${import.meta.env.BASE_URL}models/${file}`)
+    .then((gltf) => {
+      const model = gltf.scene;
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      if (size.x > size.z) {
+        model.rotateY(Math.PI / 2);
+        model.updateMatrixWorld(true);
+        box.setFromObject(model);
+        box.getSize(size);
+        box.getCenter(center);
+      }
+      const scale = CAR_LENGTH / size.z;
+      const group = new THREE.Group();
+      group.add(model);
+      group.scale.setScalar(scale);
+      model.position.set(-center.x, -box.min.y, -center.z);
+      model.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) mesh.castShadow = true;
+      });
+      return group;
+    });
+  modelCache.set(file, pending);
+  return pending;
 }
 
 const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.42, 20);
@@ -14,7 +56,12 @@ const rubber = new THREE.MeshStandardMaterial({ color: '#111114', roughness: 0.9
  * Procedural open wheel car. Intentionally low poly but silhouette accurate so
  * it reads as a modern F1 machine from the board camera.
  */
-export function buildCar(primary: string, secondary: string, accent: string): CarRig {
+export function buildCar(
+  primary: string,
+  secondary: string,
+  accent: string,
+  model?: string,
+): CarRig {
   const group = new THREE.Group();
   const paint = new THREE.MeshStandardMaterial({
     color: primary,
@@ -114,6 +161,16 @@ export function buildCar(primary: string, secondary: string, accent: string): Ca
     wheels.push(wheel);
     group.add(wheel);
   });
+
+  if (model) {
+    const shell = new THREE.Group();
+    group.children.slice().forEach((child) => shell.add(child));
+    group.add(shell);
+    loadCarModel(model).then((loaded) => {
+      shell.visible = false;
+      group.add(loaded.clone(true));
+    });
+  }
 
   return { group, wheels, body: monocoque };
 }

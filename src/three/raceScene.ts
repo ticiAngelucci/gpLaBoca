@@ -136,7 +136,12 @@ export class RaceScene {
     this.rain = world.rainSystem;
 
     this.state.karts.forEach((k) => {
-      const rig = buildCar(k.driver.colors[0], k.driver.colors[1], k.driver.accent);
+      const rig = buildCar(
+        k.driver.colors[0],
+        k.driver.colors[1],
+        k.driver.accent,
+        k.driver.model,
+      );
       this.scene.add(rig.group);
       this.rigs.push(rig);
     });
