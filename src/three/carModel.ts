@@ -15,6 +15,10 @@ interface WheelHub {
   radius: number;
 }
 
+interface WheelCandidate extends WheelHub {
+  triangles: number;
+}
+
 function collectMeshes(root: THREE.Object3D): THREE.Mesh[] {
   const meshes: THREE.Mesh[] = [];
   root.traverse((o) => {
@@ -24,64 +28,140 @@ function collectMeshes(root: THREE.Object3D): THREE.Mesh[] {
   return meshes;
 }
 
+/** Find connected pieces whose side profile is circular, low and outboard. */
+function wheelCandidates(
+  mesh: THREE.Mesh,
+  toRoot: THREE.Matrix4,
+  carBox: THREE.Box3,
+): WheelCandidate[] {
+  const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const index = mesh.geometry.getIndex();
+  if (!index) return [];
+
+  // A GLB may put the whole car in one mesh, but its wheel rings are still
+  // disconnected pieces. Grouping by shared vertices lets us identify those
+  // rings without mistaking the front wing or floor for a tyre.
+  const parent = Int32Array.from({ length: pos.count }, (_, i) => i);
+  const find = (value: number): number => {
+    let root = value;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[value] !== value) {
+      const next = parent[value];
+      parent[value] = root;
+      value = next;
+    }
+    return root;
+  };
+  const union = (left: number, right: number) => {
+    const a = find(left);
+    const b = find(right);
+    if (a !== b) parent[b] = a;
+  };
+
+  const indices = index.array;
+  for (let i = 0; i < indices.length; i += 3) {
+    union(indices[i], indices[i + 1]);
+    union(indices[i], indices[i + 2]);
+  }
+
+  const components = new Map<number, { box: THREE.Box3; triangles: number }>();
+  const point = new THREE.Vector3();
+  for (let i = 0; i < indices.length; i += 3) {
+    const root = find(indices[i]);
+    let component = components.get(root);
+    if (!component) {
+      component = { box: new THREE.Box3(), triangles: 0 };
+      components.set(root, component);
+    }
+    component.triangles += 1;
+    for (let corner = 0; corner < 3; corner += 1) {
+      point.fromBufferAttribute(pos, indices[i + corner]).applyMatrix4(toRoot);
+      component.box.expandByPoint(point);
+    }
+  }
+
+  const carSize = carBox.getSize(new THREE.Vector3());
+  const midX = (carBox.min.x + carBox.max.x) / 2;
+  const componentSize = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  const candidates: WheelCandidate[] = [];
+  components.forEach((component) => {
+    component.box.getSize(componentSize);
+    component.box.getCenter(center);
+    const minDiameter = Math.min(componentSize.y, componentSize.z);
+    const maxDiameter = Math.max(componentSize.y, componentSize.z);
+    const diameter = (componentSize.y + componentSize.z) / 2;
+    const circular = maxDiameter / Math.max(minDiameter, Number.EPSILON) <= 1.25;
+    const thinSideProfile = componentSize.x <= diameter * 0.55;
+    const outboard = Math.abs(center.x - midX) >= carSize.x * 0.25;
+    const low = center.y <= carBox.min.y + carSize.y * 0.6;
+    const largeEnough = minDiameter >= carSize.y * 0.32;
+    if (
+      component.triangles >= 20 &&
+      circular &&
+      thinSideProfile &&
+      outboard &&
+      low &&
+      largeEnough
+    ) {
+      candidates.push({
+        center: center.clone(),
+        radius: diameter / 2,
+        triangles: component.triangles,
+      });
+    }
+  });
+  return candidates;
+}
+
 /**
- * Imported cars arrive as static hulls with no useful node names, so the tyres
- * are found by shape: the only geometry sitting low and outboard, clustered
- * into two axles.
+ * Imported cars arrive as static hulls with no useful node names. Wheel hubs
+ * are inferred from complete circular components instead of loose vertices;
+ * the latter are heavily biased by wings and used to make the car flap apart.
  */
 function findWheelHubs(meshes: THREE.Mesh[], toRoot: THREE.Matrix4[], box: THREE.Box3): WheelHub[] {
   const size = box.getSize(new THREE.Vector3());
   const midX = (box.min.x + box.max.x) / 2;
-  const outer = size.x * 0.3;
-  const lowY = box.min.y + size.y * 0.45;
-  const v = new THREE.Vector3();
-  const candidates: THREE.Vector3[] = [];
-  meshes.forEach((mesh, mi) => {
-    const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-    for (let i = 0; i < pos.count; i += 3) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(toRoot[mi]);
-      if (Math.abs(v.x - midX) > outer && v.y < lowY) candidates.push(v.clone());
-    }
-  });
-  if (candidates.length < 64) return [];
+  const candidates = meshes.flatMap((mesh, i) => wheelCandidates(mesh, toRoot[i], box));
+  if (candidates.length < 4) return [];
 
-  let front = box.max.z - size.z * 0.25;
-  let rear = box.min.z + size.z * 0.25;
-  for (let pass = 0; pass < 12; pass += 1) {
-    let fSum = 0;
-    let fCount = 0;
-    let rSum = 0;
-    let rCount = 0;
-    candidates.forEach((c) => {
-      if (Math.abs(c.z - front) < Math.abs(c.z - rear)) {
-        fSum += c.z;
-        fCount += 1;
+  // Candidates from the same tyre (sidewall, rim and tread) have practically
+  // the same Z. Merge them into axle clusters, then retain the two clusters
+  // that contain a circular component on both sides of the car.
+  const clusters: { z: number; candidates: WheelCandidate[] }[] = [];
+  const tolerance = size.z * 0.08;
+  candidates
+    .sort((a, b) => a.center.z - b.center.z)
+    .forEach((candidate) => {
+      const cluster = clusters.find((entry) => Math.abs(entry.z - candidate.center.z) <= tolerance);
+      if (cluster) {
+        cluster.candidates.push(candidate);
+        cluster.z =
+          cluster.candidates.reduce((sum, entry) => sum + entry.center.z, 0) /
+          cluster.candidates.length;
       } else {
-        rSum += c.z;
-        rCount += 1;
+        clusters.push({ z: candidate.center.z, candidates: [candidate] });
       }
     });
-    if (!fCount || !rCount) return [];
-    front = fSum / fCount;
-    rear = rSum / rCount;
-  }
 
-  const hubs: WheelHub[] = [];
-  [front, rear].forEach((axleZ) => {
-    [-1, 1].forEach((side) => {
-      const near = candidates.filter(
-        (c) => Math.sign(c.x - midX) === side && Math.abs(c.z - axleZ) < size.z * 0.14,
-      );
-      if (near.length < 16) return;
-      const b = new THREE.Box3().setFromPoints(near);
-      const radius = Math.max(b.max.y - b.min.y, b.max.z - b.min.z) / 2;
-      hubs.push({
-        center: new THREE.Vector3((b.min.x + b.max.x) / 2, b.min.y + radius, axleZ),
-        radius,
-      });
-    });
-  });
-  return hubs.length === 4 ? hubs : [];
+  const axles = clusters
+    .map((cluster) => {
+      const left = cluster.candidates
+        .filter((candidate) => candidate.center.x < midX)
+        .sort((a, b) => b.radius - a.radius)[0];
+      const right = cluster.candidates
+        .filter((candidate) => candidate.center.x > midX)
+        .sort((a, b) => b.radius - a.radius)[0];
+      return left && right ? { left, right } : null;
+    })
+    .filter((axle): axle is { left: WheelCandidate; right: WheelCandidate } => axle !== null)
+    .sort((a, b) => b.left.radius + b.right.radius - (a.left.radius + a.right.radius))
+    .slice(0, 2);
+
+  if (axles.length !== 2 || Math.abs(axles[0].left.center.z - axles[1].left.center.z) < size.z * 0.25) {
+    return [];
+  }
+  return axles.flatMap(({ left, right }) => [left, right]);
 }
 
 /**
@@ -101,6 +181,14 @@ function detachWheels(root: THREE.Object3D): void {
   });
   const hubs = findWheelHubs(meshes, toRoot, localBox);
   if (!hubs.length) return;
+
+  const carSize = localBox.getSize(new THREE.Vector3());
+  const midX = (localBox.min.x + localBox.max.x) / 2;
+  const innerWheelEdge = carSize.x * 0.25;
+  const insideWheel = (point: THREE.Vector3, hub: WheelHub): boolean =>
+    Math.sign(point.x - midX) === Math.sign(hub.center.x - midX) &&
+    Math.abs(point.x - midX) >= innerWheelEdge &&
+    Math.hypot(point.y - hub.center.y, point.z - hub.center.z) <= hub.radius * 1.08;
 
   const pivots = hubs.map((hub) => {
     const pivot = new THREE.Group();
@@ -127,11 +215,10 @@ function detachWheels(root: THREE.Object3D): void {
       a.fromBufferAttribute(pos, idx[i]).applyMatrix4(rel);
       b.fromBufferAttribute(pos, idx[i + 1]).applyMatrix4(rel);
       c.fromBufferAttribute(pos, idx[i + 2]).applyMatrix4(rel);
-      a.add(b).add(c).divideScalar(3);
+      // Every corner must belong to the wheel volume. A centroid-only test can
+      // grab a long wing triangle and turn it into a spinning mower blade.
       const hit = hubs.findIndex(
-        (h) =>
-          Math.abs(a.x - h.center.x) < h.radius * 2 &&
-          Math.hypot(a.y - h.center.y, a.z - h.center.z) < h.radius * 1.02,
+        (hub) => insideWheel(a, hub) && insideWheel(b, hub) && insideWheel(c, hub),
       );
       if (hit < 0) kept.push(idx[i], idx[i + 1], idx[i + 2]);
       else perHub[hit].push(idx[i], idx[i + 1], idx[i + 2]);

@@ -75,9 +75,9 @@ export function MainMenu() {
         </button>
 
         <p className="legal">
-          Juego original. No está afiliado ni licenciado por la Fórmula 1, la FIA, ningún equipo,
-          piloto real ni por el Club Atlético Boca Juniors. Los pilotos, escuderías, el circuito y el
-          estadio son creaciones propias inspiradas en el automovilismo y en el barrio de La Boca.
+          Proyecto fan no oficial. No está afiliado ni licenciado por Formula 1, la FIA, los equipos,
+          pilotos, Disney/Pixar ni el Club Atlético Boca Juniors. Los nombres y marcas pertenecen a
+          sus respectivos titulares.
         </p>
       </div>
     </div>

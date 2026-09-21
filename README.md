@@ -7,13 +7,17 @@ externos: el mundo 3D y las texturas se generan por código.
 
 ## Cómo correrlo
 
+Requiere **Node.js 20.19+ o 22.12+** (una versión LTS).
+
 ```bash
 npm install
-npm run dev      # servidor de desarrollo
+npm run dev      # servidor de desarrollo en http://localhost:5173
 npm run build    # typecheck + build de producción
 npm run lint     # oxlint
 npm run simulate # 10 carreras headless para validar el motor
 ```
+
+Después de ejecutar `npm run dev`, abrí `http://localhost:5173` en el navegador.
 
 Agregando `?auto=1` a la URL corre el modo demo: la IA maneja también el auto del
 jugador, útil para mirar el circuito entero sin manejar.
@@ -69,11 +73,14 @@ después baja la resolución para que la carrera siga en tiempo real.
 Agregá una entrada en `src/race/drivers.ts`: nombre, equipo, colores, casco y stats
 (`speed`, `accel`, `handling`, `drift`, `stamina`). No hace falta tocar UI ni motor.
 
-## Legales
+## Legales y atribuciones
 
-Los pilotos, equipos y escuderías del juego son ficticios. El proyecto no está
-afiliado ni licenciado por Fórmula 1, la FIA, ningún equipo o piloto real, ni por
-el Club Atlético Boca Juniors. La Boca y el estadio están representados de forma
-estilizada e interpretativa. Para usar nombres, imágenes o escudos reales hacen
-falta las licencias correspondientes: el roster es intercambiable justamente para
-eso.
+Proyecto fan no oficial, sin afiliación ni licencia de Formula 1, la FIA, sus
+equipos o pilotos, Disney/Pixar ni el Club Atlético Boca Juniors. Los nombres y
+marcas pertenecen a sus respectivos titulares. La Boca y el estadio están
+representados de forma estilizada e interpretativa.
+
+El modelo 3D [“Lightning McQueen”](https://sketchfab.com/3d-models/lightning-mcqueen-e00ae9484f664abea4ccf90248d7e924),
+de DinseyPixarCarsModels, se usa sin modificar bajo
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) y conserva los metadatos
+de autor, licencia y fuente dentro del archivo GLB original.
