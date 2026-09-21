@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+import { loadCarModel, WHEEL_PIVOT } from './carModel';
 
 export interface CarRig {
   group: THREE.Group;
-  wheels: THREE.Mesh[];
+  wheels: THREE.Object3D[];
   body: THREE.Mesh;
 }
 
@@ -14,7 +15,12 @@ const rubber = new THREE.MeshStandardMaterial({ color: '#111114', roughness: 0.9
  * Procedural open wheel car. Intentionally low poly but silhouette accurate so
  * it reads as a modern F1 machine from the board camera.
  */
-export function buildCar(primary: string, secondary: string, accent: string): CarRig {
+export function buildCar(
+  primary: string,
+  secondary: string,
+  accent: string,
+  model?: string,
+): CarRig {
   const group = new THREE.Group();
   const paint = new THREE.MeshStandardMaterial({
     color: primary,
@@ -94,7 +100,7 @@ export function buildCar(primary: string, secondary: string, accent: string): Ca
   diffuser.position.set(0, 0.3, -1.85);
   group.add(diffuser);
 
-  const wheels: THREE.Mesh[] = [];
+  const wheels: THREE.Object3D[] = [];
   const offsets: [number, number][] = [
     [-0.95, 1.35],
     [0.95, 1.35],
@@ -114,6 +120,22 @@ export function buildCar(primary: string, secondary: string, accent: string): Ca
     wheels.push(wheel);
     group.add(wheel);
   });
+
+  if (model) {
+    const shell = new THREE.Group();
+    group.children.slice().forEach((child) => shell.add(child));
+    group.add(shell);
+    loadCarModel(model).then((loaded) => {
+      const copy = loaded.clone(true);
+      shell.visible = false;
+      group.add(copy);
+      const pivots: THREE.Object3D[] = [];
+      copy.traverse((o) => {
+        if (o.name === WHEEL_PIVOT) pivots.push(o);
+      });
+      if (pivots.length) wheels.splice(0, wheels.length, ...pivots);
+    });
+  }
 
   return { group, wheels, body: monocoque };
 }

@@ -21,6 +21,8 @@ export interface Driver {
   accent: string;
   stats: DriverStats;
   bio: string;
+  /** Optional GLB under public/models, replacing the procedural car. */
+  model?: string;
 }
 
 /**
@@ -37,6 +39,7 @@ export const DRIVERS: Driver[] = [
     accent: '#ff2a2a',
     stats: { speed: 5, accel: 3, handling: 3, drift: 4, stamina: 3 },
     bio: 'Frena más tarde que todos y no le tiembla el pulso en la curva del puerto.',
+    model: 'rb19.glb',
   },
   {
     id: 'mensah',
@@ -67,6 +70,7 @@ export const DRIVERS: Driver[] = [
     accent: '#ffcc00',
     stats: { speed: 3, accel: 4, handling: 5, drift: 4, stamina: 3 },
     bio: 'Creció a tres cuadras de la cancha y conoce cada adoquín flojo.',
+    model: 'alpine.glb',
   },
   {
     id: 'ibarra',
