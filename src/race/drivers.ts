@@ -39,6 +39,7 @@ export const DRIVERS: Driver[] = [
     accent: '#ff2a2a',
     stats: { speed: 5, accel: 3, handling: 3, drift: 4, stamina: 3 },
     bio: 'Frena más tarde que todos y no le tiembla el pulso en la curva del puerto.',
+    model: 'rb19.glb',
   },
   {
     id: 'mensah',

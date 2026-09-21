@@ -23,7 +23,10 @@ function seeded(i: number): number {
 }
 
 function insideStadium(p: THREE.Vector3): boolean {
-  return Math.abs(p.x - STADIUM_CENTER.x) < 56 && Math.abs(p.z - STADIUM_CENTER.z) < 62;
+  const dx = Math.abs(p.x - STADIUM_CENTER.x);
+  const dz = Math.abs(p.z - STADIUM_CENTER.z);
+  // The bowl itself plus the two tunnels that stick out of it.
+  return (dx < 56 && dz < 62) || (dx < 42 && dz < 126);
 }
 
 /** Keeps walls and houses away from the mouths of the dirt shortcuts. */
@@ -488,9 +491,163 @@ function buildStadium(scene: THREE.Scene): THREE.SpotLight[] {
     floodlights.push(light);
   });
 
+  buildStadiumGates(scene);
   scene.add(stadium);
   loadStadiumModel(stadium, shell);
   return floodlights;
+}
+
+/** Half width, height and outer reach of the tunnels carved through the bowl. */
+const GATE_HALF_WIDTH = 16;
+const GATE_HEIGHT = 20;
+const GATE_INNER_Z = 56;
+const GATE_OUTER_Z = 116;
+
+/**
+ * Lined tunnels and painted porticos where the circuit pierces the bowl: they
+ * follow the racing line, hide the cut edges of the model and turn the pass
+ * through the stadium into a proper entrance.
+ */
+function buildStadiumGates(scene: THREE.Scene) {
+  const concrete = new THREE.MeshStandardMaterial({ color: '#16305e', roughness: 0.85 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#102a52', roughness: 1 });
+  const blue = new THREE.MeshStandardMaterial({ color: '#12336b', roughness: 0.7 });
+  const gold = new THREE.MeshStandardMaterial({
+    color: '#f4c430',
+    emissive: new THREE.Color('#f4c430'),
+    emissiveIntensity: 0.4,
+    roughness: 0.6,
+  });
+
+  const walls: THREE.BufferGeometry[] = [];
+  const roofs: THREE.BufferGeometry[] = [];
+  const trims: THREE.BufferGeometry[] = [];
+  const frames: THREE.BufferGeometry[] = [];
+  const bands: THREE.BufferGeometry[] = [];
+
+  const wallGeo = new THREE.BoxGeometry(3, GATE_HEIGHT, 5.2);
+  const roofGeo = new THREE.BoxGeometry(GATE_HALF_WIDTH * 2 + 6, 5, 5.2);
+  const stripGeo = new THREE.BoxGeometry(0.5, 0.7, 5.2);
+
+  gateRuns().forEach(({ samples, outward }) => {
+    samples.forEach((sample, i) => {
+      const yaw = Math.atan2(sample.dir.x, sample.dir.z);
+      [-1, 1].forEach((side) => {
+        const at = sample.pos
+          .clone()
+          .addScaledVector(sample.right, side * (GATE_HALF_WIDTH + 1.5));
+        walls.push(placed(wallGeo, at.clone().setY(GATE_HEIGHT / 2), yaw));
+        trims.push(
+          placed(
+            stripGeo,
+            sample.pos
+              .clone()
+              .addScaledVector(sample.right, side * GATE_HALF_WIDTH)
+              .setY(GATE_HEIGHT - 1.6),
+            yaw,
+          ),
+        );
+      });
+      roofs.push(placed(roofGeo, sample.pos.clone().setY(GATE_HEIGHT + 2.5), yaw));
+
+      if (i === samples.length - 1) {
+        // Portico around the street-facing mouth.
+        const yawEnd = Math.atan2(sample.dir.x, sample.dir.z);
+        [-1, 1].forEach((side) => {
+          frames.push(
+            placed(
+              new THREE.BoxGeometry(7, GATE_HEIGHT + 9, 4),
+              sample.pos
+                .clone()
+                .addScaledVector(sample.right, side * (GATE_HALF_WIDTH + 4))
+                .setY((GATE_HEIGHT + 9) / 2),
+              yawEnd,
+            ),
+          );
+        });
+        frames.push(
+          placed(
+            new THREE.BoxGeometry(GATE_HALF_WIDTH * 2 + 15, 7, 4),
+            sample.pos.clone().setY(GATE_HEIGHT + 5.5),
+            yawEnd,
+          ),
+        );
+        bands.push(
+          placed(
+            new THREE.BoxGeometry(GATE_HALF_WIDTH * 2 + 15, 1.6, 0.6),
+            sample.pos
+              .clone()
+              .addScaledVector(sample.dir, outward * 2.3)
+              .setY(GATE_HEIGHT + 9.6),
+            yawEnd,
+          ),
+        );
+        const sign = new THREE.Mesh(
+          new THREE.PlaneGeometry(GATE_HALF_WIDTH * 2 + 4, 4.4),
+          new THREE.MeshBasicMaterial({ map: signTexture('LA BOMBONERA'), transparent: true }),
+        );
+        sign.position
+          .copy(sample.pos)
+          .addScaledVector(sample.dir, outward * 2.9)
+          .setY(GATE_HEIGHT + 5.5);
+        sign.rotation.y = outward > 0 ? yawEnd : yawEnd + Math.PI;
+        scene.add(sign);
+      }
+
+      if (i % 6 === 3) {
+        const lamp = new THREE.PointLight('#ffe9a8', 2.6, 44, 1.4);
+        lamp.position.copy(sample.pos).setY(GATE_HEIGHT - 2.5);
+        scene.add(lamp);
+      }
+    });
+  });
+
+  addMerged(scene, walls, concrete, true);
+  addMerged(scene, roofs, dark);
+  addMerged(scene, trims, gold);
+  addMerged(scene, frames, blue, true);
+  addMerged(scene, bands, gold);
+}
+
+/**
+ * The two stretches of circuit that run under the stands, ordered from the
+ * pitch outwards so the last sample of each is the street-facing mouth.
+ */
+function gateRuns(): { samples: TrackSample[]; outward: number }[] {
+  const runs: TrackSample[][] = [[], []];
+  SAMPLES_LIST.forEach((sample, i) => {
+    if (i % 3) return;
+    const dx = sample.pos.x - STADIUM_CENTER.x;
+    const dz = sample.pos.z - STADIUM_CENTER.z;
+    const inBowl = (dx / 86) ** 2 + (dz / GATE_OUTER_Z) ** 2 < 1;
+    if (!inBowl || Math.abs(dz) < GATE_INNER_Z) return;
+    runs[dz < 0 ? 0 : 1].push(sample);
+  });
+  runs[0].reverse();
+  return [
+    { samples: runs[0], outward: -1 },
+    { samples: runs[1], outward: 1 },
+  ].filter((run) => run.samples.length > 1);
+}
+
+/** Painted sign board hung over each stadium mouth. */
+function signTexture(text: string): THREE.Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 220;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#12336b';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#f4c430';
+  ctx.fillRect(0, 0, canvas.width, 14);
+  ctx.fillRect(0, canvas.height - 14, canvas.width, 14);
+  ctx.font = 'bold 112px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 6);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
 /** Swaps the blocky stands for the detailed Bombonera once the model arrives. */

@@ -1,51 +1,10 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { loadCarModel, WHEEL_PIVOT } from './carModel';
 
 export interface CarRig {
   group: THREE.Group;
-  wheels: THREE.Mesh[];
+  wheels: THREE.Object3D[];
   body: THREE.Mesh;
-}
-
-/** Wheelbase-to-nose length every imported car is scaled to, in metres. */
-const CAR_LENGTH = 4.6;
-
-const modelCache = new Map<string, Promise<THREE.Object3D>>();
-
-function loadCarModel(file: string): Promise<THREE.Object3D> {
-  const cached = modelCache.get(file);
-  if (cached) return cached;
-  const loader = new GLTFLoader();
-  loader.setMeshoptDecoder(MeshoptDecoder);
-  const pending = loader
-    .loadAsync(`${import.meta.env.BASE_URL}models/${file}`)
-    .then((gltf) => {
-      const model = gltf.scene;
-      model.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(model);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      if (size.x > size.z) {
-        model.rotateY(Math.PI / 2);
-        model.updateMatrixWorld(true);
-        box.setFromObject(model);
-        box.getSize(size);
-        box.getCenter(center);
-      }
-      const scale = CAR_LENGTH / size.z;
-      const group = new THREE.Group();
-      group.add(model);
-      group.scale.setScalar(scale);
-      model.position.set(-center.x, -box.min.y, -center.z);
-      model.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        if (mesh.isMesh) mesh.castShadow = true;
-      });
-      return group;
-    });
-  modelCache.set(file, pending);
-  return pending;
 }
 
 const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.42, 20);
@@ -141,7 +100,7 @@ export function buildCar(
   diffuser.position.set(0, 0.3, -1.85);
   group.add(diffuser);
 
-  const wheels: THREE.Mesh[] = [];
+  const wheels: THREE.Object3D[] = [];
   const offsets: [number, number][] = [
     [-0.95, 1.35],
     [0.95, 1.35],
@@ -167,8 +126,14 @@ export function buildCar(
     group.children.slice().forEach((child) => shell.add(child));
     group.add(shell);
     loadCarModel(model).then((loaded) => {
+      const copy = loaded.clone(true);
       shell.visible = false;
-      group.add(loaded.clone(true));
+      group.add(copy);
+      const pivots: THREE.Object3D[] = [];
+      copy.traverse((o) => {
+        if (o.name === WHEEL_PIVOT) pivots.push(o);
+      });
+      if (pivots.length) wheels.splice(0, wheels.length, ...pivots);
     });
   }
 
